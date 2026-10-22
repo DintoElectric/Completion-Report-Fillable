@@ -1,0 +1,117 @@
+/* App layout built on the Nocturne tokens. Nocturne itself is not restyled. */
+html, body, #root { height: 100%; }
+body { overflow: hidden; -webkit-text-size-adjust: 100%; }
+.num { font-variant-numeric: tabular-nums; }
+.app { display: flex; flex-direction: column; height: 100dvh; }
+.muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.dim { color: var(--color-neutral-500); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* top bar */
+.topbar { height: 48px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+  border-bottom: 1px solid var(--color-divider); position: relative; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; cursor: pointer;
+  background: none; border: 0; color: inherit; padding: 0; font-family: inherit; }
+.brand-mark { width: 22px; height: 22px; border: 1.5px solid var(--color-accent); border-radius: 6px;
+  display: grid; place-items: center; color: var(--color-accent); }
+.crumbs { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-neutral-400); min-width: 0; }
+.crumbs button { background: none; border: 0; font: inherit; color: inherit; cursor: pointer; padding: 0; }
+.crumbs button:hover { color: var(--color-text); }
+.crumbs .last { color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navlinks { display: flex; gap: 18px; font-size: 13px; }
+.navlinks button { background: none; border: 0; font: inherit; cursor: pointer; padding: 0; color: var(--color-neutral-400); }
+.navlinks button[aria-current='page'] { color: var(--color-accent); }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--color-accent-900);
+  box-shadow: 0 0 0 1px var(--color-accent-700); color: var(--color-accent-200); font-size: 11px; font-weight: 500;
+  display: grid; place-items: center; cursor: pointer; border: 0; font-family: inherit; }
+.menu { position: absolute; right: 12px; top: 52px; width: 240px; background: var(--color-surface);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 12px; z-index: 40; font-size: 13px; }
+.save-state { font-size: 12px; color: var(--color-neutral-500); }
+.save-state.err { color: var(--color-accent-300); }
+
+/* gate */
+.gate { height: 100dvh; display: grid; place-items: center; padding: 16px;
+  background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--color-accent) 14%, var(--color-bg)), var(--color-bg) 65%); }
+.gate-card { width: min(380px, 100%); background: var(--color-surface); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md); padding: 28px; display: flex; flex-direction: column; gap: 14px; }
+.gate-mark { width: 40px; height: 40px; border: 1.5px solid var(--color-accent); border-radius: 10px;
+  display: grid; place-items: center; color: var(--color-accent); }
+.err-text { font-size: 13px; color: var(--color-accent-300); }
+.input, select.input { font-size: 16px; } /* iPad Safari zooms the page on inputs under 16px */
+@media (pointer: fine) { .input, select.input { font-size: 14px; } }
+
+/* pages */
+.page { flex: 1; overflow: auto; }
+.page-inner { padding: 40px 56px; max-width: 1180px; display: flex; flex-direction: column; gap: 28px; }
+.row { display: flex; align-items: center; gap: 12px; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.search { position: relative; width: 260px; }
+.search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-neutral-500); }
+.search .input { padding-left: 32px; }
+
+.dropzone { border-radius: var(--radius-lg); border: 1px dashed var(--color-neutral-700);
+  background: linear-gradient(120deg, var(--color-surface), var(--color-bg)); padding: 22px 24px;
+  display: flex; align-items: center; gap: 16px; }
+.dropzone.over { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface)); }
+.icon-tile { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; flex: none;
+  background: var(--color-accent-900); color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent-700), 0 0 20px color-mix(in srgb, var(--color-accent) 25%, transparent); }
+.progress { width: 110px; height: 4px; background: var(--color-neutral-800); border-radius: 2px; overflow: hidden; }
+.progress > i { display: block; height: 100%; background: var(--color-accent); }
+.tr-click { cursor: pointer; }
+.right { text-align: right; }
+th.right { text-align: right; }
+
+
+/* ---------- shared bits (from Tally) ---------- */
+.empty { padding: 28px 16px; text-align: center; color: var(--color-neutral-400); font-size: 13px; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.field { display: flex; flex-direction: column; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--color-surface); box-shadow: var(--shadow-md);
+  border-radius: 10px; padding: 10px 16px; font-size: 13px; z-index: 60; max-width: 80vw; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--color-neutral-700); border-top-color: var(--color-accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- this app's screens ---------- */
+.h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.page-inner > .h1 + .panel { margin-top: 4px; }
+.panel { background: var(--color-surface); border-radius: var(--radius-lg); padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.file-name { overflow-wrap: anywhere; }
+.upload-row { font-size: 13px; justify-content: space-between; }
+.upload-row .progress { flex: none; }
+.icon-btn { padding: 4px 6px; min-height: 28px; }
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--color-accent); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.link-btn:hover { text-decoration: underline; }
+.link-btn:focus-visible { outline: 2px solid var(--color-accent-400); outline-offset: 2px; border-radius: 4px; }
+.dropzone.off { opacity: .5; cursor: not-allowed; }
+.dialog .field { gap: 6px; font-size: 13px; }
+.table a { color: inherit; text-decoration: none; }
+.table a:hover { color: var(--color-accent); }
+@media (max-width: 720px) { .page-inner { padding: 24px 16px; } .topbar .navlinks { gap: 12px; } }
+
+/* ---------- filling ---------- */
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.step { display: flex; gap: 10px; align-items: flex-start; }
+.step-icon { width: 16px; flex: none; display: grid; place-items: center; padding-top: 2px; }
+.step.ok .step-icon { color: var(--color-accent); }
+.step.warn .step-icon { color: #e0b252; }
+.step.fail .step-icon, .step.fail .file-name { color: var(--color-accent-300); }
+.warn-text { margin: 0; font-size: 13px; display: flex; gap: 8px; align-items: flex-start; color: #e0b252; }
+.warn-text svg { flex: none; margin-top: 3px; }
+textarea.input { resize: vertical; font-family: inherit; }
+.fill-row { display: grid; grid-template-columns: minmax(200px, 320px) minmax(180px, 360px) 1fr; gap: 6px 14px; align-items: center; font-size: 13px; }
+.fill-label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.why { font-size: 12px; overflow-wrap: anywhere; }
+.fill-input { width: 100%; min-width: 0; }
+.fill-input.check { border-color: #e0b252; }
+.conf-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid #e0b252; color: #e0b252; }
+.conf-tag.low { border-color: var(--color-accent-300); color: var(--color-accent-300); }
+.grid-scroll { overflow-x: auto; }
+.fill-grid th, .fill-grid td { white-space: nowrap; vertical-align: middle; }
+.fill-grid td.file-name { white-space: normal; min-width: 190px; font-size: 13px; }
+.fill-grid .fill-input { min-width: 96px; padding: 4px 8px; }
+.fill-grid td.wide .fill-input { min-width: 240px; }
+.save-bar { position: sticky; bottom: 0; box-shadow: 0 -8px 24px color-mix(in srgb, var(--color-bg) 80%, transparent); }
+@media (max-width: 900px) { .fill-row { grid-template-columns: 1fr; } }

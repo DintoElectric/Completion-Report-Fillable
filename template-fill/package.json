@@ -1,0 +1,39 @@
+{
+  "name": "template-fill",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "netlify dev",
+    "dev:vite": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p netlify/tsconfig.json --noEmit",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types scripts/db.test.mjs && node --experimental-strip-types --test scripts/unit.test.ts scripts/closeout.test.ts"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.1",
+    "@netlify/database": "2.0.1",
+    "@netlify/functions": "6.0.0",
+    "@netlify/identity": "2.0.0",
+    "@phosphor-icons/react": "2.1.10",
+    "exceljs": "4.4.0",
+    "pdfjs-dist": "6.4.299",
+    "pizzip": "3.3.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@types/node": "22.20.4",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "5.2.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}
