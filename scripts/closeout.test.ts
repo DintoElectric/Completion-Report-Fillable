@@ -532,18 +532,18 @@ test('PO rows of the template are listed with their codes', async () => {
   assert.deepEqual(rows.map((r) => [r.row, r.label, r.codes.join()]), [[46, '030-DISTRIBUTION', '030'], [47, '110-FIRE ALARM', '110'], [48, '300-TESTING', '300']]);
 });
 
-test('PO proposals: amounts added per row, budget = amount + P/U, vendors as the comment, unplaced and empty POs left out', async () => {
+test("PO proposals: budget cost = the log's AMOUNT, PO amount = its P/U, added per row; vendors as the comment; unplaced and empty POs left out", async () => {
   const t = await readTemplate(await makeTemplate());
   const fields = buildFields(t.grid, { choices: t.choices });
   const lines = [ln('Graybar (Gear)', '030', 1000, 100), { ...ln('EW (Gear)', '030', 500, -50), po: '2' }, { ...ln('Loose Co', '300', 999, 1), po: '3' }, { ...ln('Zero', '110', 0, 0), po: '4' }];
   const p = poProposals(lines, [46, 46, null, 47], ['high', 'medium', 'low', 'high'], fields, 'PO.xls');
   const by = Object.fromEntries(p.map((x) => [x.id, x]));
-  assert.equal(by.C46.value, 1500);                       // PO amount
-  assert.equal(by.B46.value, 1100 + 450);                 // budget cost: amount + P/U, summed
+  assert.equal(by.B46.value, 1500);                       // budget cost: AMOUNT column, summed
+  assert.equal(by.C46.value, 50);                         // PO amount: P/U column, summed (100 + -50)
   assert.equal(by.G46.value, 'Graybar; EW');              // comment: vendor names without the bracketed part
-  assert.equal(by.C46.confidence, 'medium', 'one of the two was only a guess');
-  assert.equal(by.B46.confidence, 'medium');
-  assert.match(by.C46.note!, /2 POs/);
-  assert.ok(!('C47' in by) && !('C48' in by), 'an empty PO and an unplaced PO add nothing');
+  assert.equal(by.B46.confidence, 'medium', 'one of the two was only a guess');
+  assert.match(by.B46.note!, /2 POs/);
+  assert.match(by.C46.source, /P\/U column/);
+  assert.ok(!('C47' in by) && !('C48' in by) && !('B47' in by), 'an empty PO and an unplaced PO add nothing');
   assert.ok(p.every((x) => x.origin === 'rule'));
 });

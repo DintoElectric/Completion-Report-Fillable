@@ -28,7 +28,7 @@ How filling works (job page -> "Fill the template" -> `/j/:id/fill`):
 3b. **Purchase orders come from the CF Data PO log** (`parsePoLog`, `matchPoLines`, `poProposals` in `shared/closeout.ts`). Each PO is placed on one
    template row: by the cost code first, then by words in the vendor name (`SAME` word groups); unclear ones are left for the person to
    pick in the "Purchase orders" panel of the check screen (changing a row recalculates that table). Several POs on one row are added.
-   Budget cost = PO amount + the log's P/U column (assumption, marked "check"); the sheet's own formula shows budget - PO as the pick-up.
+   Budget cost = the log's ($) AMOUNT column; PO amount = the log's P/U ($) column (as the user specified); the sheet's own formula shows budget - PO in its pick-up column.
    Budget cost, PO amount and the vendor comment are 'rule' fields, so the AI and the Project field list leave them out. The two change-order
    columns of the PO table still come from the CO log (AI / Project). A mismatch between the PO log's lines and its own total row, or
    between the PO log's job number and the JBI's, is shown as a warning.

@@ -231,7 +231,7 @@ export function buildFields(g: SheetGrid, opts: BuildOptions = {}): Field[] {
         if (role === 'comment') {
           add({ id, group: 'Purchase orders', label: `${label}: comment`, kind: 'text', source: 'rule', key: 'poComment', poCodes, hint: 'The vendor name(s), from the PO log.' });
         } else if (role === 'budgetCost' || role === 'poAmount') {
-          add({ id, group: 'Purchase orders', label: `${label}: ${PO_LABEL[role]}`, kind: 'number', source: 'rule', key: role, poCodes, hint: role === 'poAmount' ? 'The PO amount, from the PO log.' : 'The PO amount plus the pick-up (P/U), from the PO log.' });
+          add({ id, group: 'Purchase orders', label: `${label}: ${PO_LABEL[role]}`, kind: 'number', source: 'rule', key: role, poCodes, hint: role === 'poAmount' ? "The log's P/U column." : "The log's AMOUNT column." });
         } else {
           const hints: Record<string, string> = {
             coOut: "Change order / out-of-contract dollars for this item, from approved change orders.",
@@ -750,7 +750,7 @@ export function matchPoLines(lines: PoLine[], rows: PoRow[]): PoMatch[] {
 
 /**
  * Budget cost, PO amount and vendor comment for each template row, from the PO log lines assigned to it.
- * Budget cost = PO amount + the log's P/U (pick-up) column; the sheet's own formula then shows budget minus PO as the pick-up.
+ * Budget cost = the log's ($) AMOUNT column; PO amount = the log's P/U ($) column. The sheet's own formula then shows budget minus PO.
  */
 export function poProposals(lines: PoLine[], assign: (number | null)[], conf: ('high' | 'medium' | 'low')[], fields: Field[], logName: string): Proposal[] {
   const byRow = new Map<number, number[]>();
@@ -758,14 +758,15 @@ export function poProposals(lines: PoLine[], assign: (number | null)[], conf: ('
   const idOf = (key: string, row: number) => fields.find((f) => f.group === 'Purchase orders' && f.key === key && splitAddr(f.id).row === row)?.id;
   const out: Proposal[] = [];
   for (const [row, idx] of byRow) {
-    const amount = round2(idx.reduce((n, i) => n + lines[i].amount, 0));
-    const budget = round2(idx.reduce((n, i) => n + lines[i].amount + lines[i].pickup, 0));
+    const budget = round2(idx.reduce((n, i) => n + lines[i].amount, 0));     // the log's AMOUNT column
+    const poAmt = round2(idx.reduce((n, i) => n + lines[i].pickup, 0));      // the log's P/U column
     const pos = idx.map((i) => `PO ${lines[i].po}`).join(', ');
     const sure = idx.every((i) => conf[i] === 'high');
     const vendors = [...new Set(idx.map((i) => lines[i].vendor.replace(/\s*\(.*$/, '').trim() || lines[i].vendor))].join('; ').slice(0, 200);
     const idA = idOf('poAmount', row), idB = idOf('budgetCost', row), idC = idOf('poComment', row);
-    if (idA && amount) out.push({ id: idA, value: amount, source: `${logName}: ${pos}`, confidence: sure ? 'high' : 'medium', note: idx.length > 1 ? `${idx.length} POs added together.` : undefined, origin: 'rule' });
-    if (idB && budget) out.push({ id: idB, value: budget, source: `${logName}: ${pos}`, confidence: 'medium', note: 'PO amount plus the P/U column of the log. Check it against your estimate.', origin: 'rule' });
+    const note = idx.length > 1 ? `${idx.length} POs added together.` : undefined;
+    if (idB && budget) out.push({ id: idB, value: budget, source: `${logName}: ${pos}, AMOUNT column`, confidence: sure ? 'high' : 'medium', note, origin: 'rule' });
+    if (idA && poAmt) out.push({ id: idA, value: poAmt, source: `${logName}: ${pos}, P/U column`, confidence: sure ? 'high' : 'medium', note, origin: 'rule' });
     if (idC && vendors) out.push({ id: idC, value: vendors, source: `${logName}: ${pos}`, confidence: 'high', origin: 'rule' });
   }
   return out;

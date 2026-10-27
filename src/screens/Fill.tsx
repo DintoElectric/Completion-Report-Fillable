@@ -428,7 +428,7 @@ function PoPanel({ po, onAssign }: { po: PoState; onAssign: (i: number, row: num
   return (
     <>
       <p className="dim" style={{ margin: 0, fontSize: 13 }}>
-        From <b>{po.name}</b>. Each PO goes to one row. When several go to the same row they are added together. Budget cost is the PO amount plus the log's P/U column.
+        From <b>{po.name}</b>. Each PO goes to one row. When several go to the same row they are added together. Budget cost is the log's Amount column and PO amount is its P/U column.
         Change a row below and the purchase-order columns update (anything you typed in those boxes is replaced).
       </p>
       {loose.length > 0 && <p className="warn-text"><WarningIcon size={14} weight="fill" /> {plural(loose.length, 'PO')} (${money(looseAmt)}) {loose.length === 1 ? 'is' : 'are'} not placed on any row, so {loose.length === 1 ? 'its' : 'their'} dollars are not counted.</p>}
