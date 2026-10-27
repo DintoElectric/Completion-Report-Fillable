@@ -163,6 +163,13 @@ export default function Fill({ jobId }: { jobId: string }) {
         }
       }
 
+      // the title defaults to the job's name in this app (the Project or AI may replace it)
+      const title = fields.find((f) => f.key === 'title');
+      if (title && title.current === undefined && !proposals[title.id] && job.name.trim()) {
+        const name = job.name.trim();
+        proposals[title.id] = { id: title.id, value: /^\d/.test(name) ? `#${name}` : name, source: "The job's name in this app", confidence: 'medium', note: 'Check the format, for example "#38005 YNHH SRC ED".', origin: 'rule' };
+      }
+
       // start the review: proposals go in, except where the template already holds a value
       const initial: Record<string, string> = {};
       for (const f of fields) { const p = proposals[f.id]; if (p && f.current === undefined && p.value !== null) initial[f.id] = String(p.value); }
@@ -317,7 +324,7 @@ function Review({ prepared, steps, values, setValues, onSave, saving, problems, 
   }
   const set = (id: string, v: string) => setValues({ ...values, [id]: v });
   const filled = fields.filter((f) => (values[f.id] ?? '').trim() !== '').length;
-  const fromJbi = fields.filter((f) => proposals[f.id]?.origin === 'rule').length;
+  const fromJbi = fields.filter((f) => f.source === 'rule' && proposals[f.id]?.origin === 'rule').length;
   const fromAi = fields.filter((f) => proposals[f.id]?.origin === 'ai' || proposals[f.id]?.origin === 'import').length;
   const lowCount = fields.filter((f) => (values[f.id] ?? '').trim() !== '' && proposals[f.id] && proposals[f.id].confidence !== 'high').length;
 

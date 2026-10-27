@@ -134,10 +134,12 @@ export function buildFields(g: SheetGrid, opts: BuildOptions = {}): Field[] {
   const laborHdr = rowWhere((r) => /^LABOR COST CODES/i.test(A(r)));
   const topEnd = laborHdr || g.maxRow;
 
-  /* header: job title, PM, foreman, date */
-  const titleRow = rowWhere((r) => !!A(r) && !/MEETING/i.test(A(r)), 1, Math.min(6, topEnd));
+  /* header: job title, meeting type, PM, foreman, date */
+  const MEETING = /MEETING|CLOSE\s?OUT/i;
+  const meetRow = rowWhere((r) => MEETING.test(A(r)), 1, Math.min(8, topEnd));
+  // the title is the row above the meeting type (it may be empty: the app fills it); older layouts: the first row with other text
+  const titleRow = meetRow > 1 ? meetRow - 1 : rowWhere((r) => !!A(r) && !MEETING.test(A(r)), 1, Math.min(6, topEnd));
   if (titleRow) add({ id: `A${titleRow}`, group: 'Header', label: 'Job number and name', kind: 'text', source: 'ai', key: 'title', hint: "The job number and name as a title, like '#38005 YNHH SRC ED'." });
-  const meetRow = rowWhere((r) => /MEETING/i.test(A(r)), 1, Math.min(8, topEnd));
   if (meetRow && opts.choices?.[`A${meetRow}`]) add({ id: `A${meetRow}`, group: 'Header', label: 'Type of meeting', kind: 'text', source: 'ai', key: 'meetingType', hint: 'Which meeting this is. Choose from the choices; if no document says, leave it empty.', choices: opts.choices[`A${meetRow}`] });
   for (let r = 1; r < topEnd; r++) {
     for (const col of ['A', 'C']) {
@@ -153,7 +155,7 @@ export function buildFields(g: SheetGrid, opts: BuildOptions = {}): Field[] {
   if (cpRow) {
     const rows: [RegExp, string, string, string][] = [
       [/^ORIGINAL CONTRACT/i, 'original', 'Original contract', 'The original (base) contract value, and the profit on it at the start.'],
-      [/^50% MEETING/i, 'meeting50', '50% meeting', "Today's contract value (base contract plus approved change orders) and the profit from the M25 report."],
+      [/^(50% MEETING|100% CLOSE\s?OUT|CLOSE\s?OUT)/i, 'meeting50', 'Meeting value (50% or closeout)', "Today's contract value (base contract plus approved change orders) and the profit from the M25 report."],
       [/^FINAL VALUE/i, 'final', 'Final value', 'Only for the closeout meeting: the final contract value and final profit. Leave empty for a 50% meeting.'],
     ];
     for (let r = cpRow + 1; r < cpRow + 8 && r < topEnd; r++) {

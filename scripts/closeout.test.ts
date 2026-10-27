@@ -16,14 +16,14 @@ import { HttpError } from '../netlify/functions/_lib/http.ts';
 import type { FillRequest } from '../shared/types.ts';
 
 /* ---------- a small closeout template, built the way the real one is laid out ---------- */
-async function makeTemplate(): Promise<Uint8Array> {
+async function makeTemplate(o: { a3?: string | null; a4?: string; meetLabel?: string } = {}): Promise<Uint8Array> {
   const wb = new ExcelJS.Workbook();
   const lists = wb.addWorksheet('Sheet1');
   ['ANN PM', 'BOB PM', 'CY PM'].forEach((n, i) => { lists.getCell(i + 1, 1).value = n; });
   ['DAN FOREMAN', 'EVE FOREMAN'].forEach((n, i) => { lists.getCell(i + 1, 2).value = n; });
   const ws = wb.addWorksheet('50% CLOSE OUT ');
   const put = (a: string, v: ExcelJS.CellValue, numFmt?: string) => { const c = ws.getCell(a); c.value = v; if (numFmt) c.numFmt = numFmt; };
-  put('A3', 'JOB NAME & #'); put('A4', '50% MEETING');
+  put('A3', o.a3 === undefined ? 'JOB NAME & #' : o.a3); put('A4', o.a4 ?? '50% MEETING');
   ws.getCell('A4').dataValidation = { type: 'list', formulae: ['"50% MEETING,CLOSEOUT MEETING"'] };
   put('A6', 'PM:'); put('C6', 'DATE:'); ws.mergeCells('C6:G6'); put('A7', 'FOREMAN:');
   ws.getCell('B6').dataValidation = { type: 'list', formulae: ['Sheet1!$A$1:$A$3'] };
@@ -32,7 +32,7 @@ async function makeTemplate(): Promise<Uint8Array> {
   put('C10', 'CONTRACT'); put('D10', 'PROFIT (M25)');
   put('A11', 'ORIGINAL CONTRACT:'); ws.mergeCells('A11:B11'); ws.getCell('C11').numFmt = '$#,##0.00'; ws.getCell('D11').numFmt = '$#,##0.00';
   put('A12', 'BUY OUT:'); put('C12', { formula: 'C11', result: 0 }); put('D12', { formula: 'D45', result: 0 });
-  put('A13', '50% MEETING:'); ws.getCell('C13').numFmt = '$#,##0.00'; ws.getCell('D13').numFmt = '$#,##0.00';
+  put('A13', o.meetLabel ?? '50% MEETING:'); ws.getCell('C13').numFmt = '$#,##0.00'; ws.getCell('D13').numFmt = '$#,##0.00';
   put('A14', 'FINAL VALUE:');
   put('A16', 'LABOR');
   put('A18', 'HOURS ESTIMATED:'); ws.mergeCells('A18:B18'); ws.getCell('C18').numFmt = '#,##0.00';
@@ -446,4 +446,17 @@ test('imported values are checked like the AI route: wrong cells, JBI cells, bad
   assert.equal(proposals.length, 4);
   assert.equal(problems.length, 5);
   assert.ok(problems.some((p) => p.startsWith('B38') && /JBI/.test(p)));
+});
+
+test('a template whose title cell is empty and whose meeting type reads "100% CLOSEOUT" is still understood', async () => {
+  const t = await readTemplate(await makeTemplate({ a3: null, a4: '100% CLOSEOUT', meetLabel: '100% CLOSEOUT:' }));
+  const fields = buildFields(t.grid, { choices: { ...t.choices, A4: ['50% MEETING', '100% CLOSEOUT'] } });
+  const title = fields.find((f) => f.key === 'title')!;
+  assert.equal(title.id, 'A3', 'the title is the row above the meeting type, even when empty');
+  assert.equal(title.current, undefined);
+  const meet = fields.find((f) => f.key === 'meetingType')!;
+  assert.equal(meet.id, 'A4');
+  assert.equal(meet.current, '100% CLOSEOUT');
+  assert.ok(fields.some((f) => f.id === 'C13' && f.key === 'meeting50Contract'), 'the contract row is found under its closeout label');
+  assert.ok(!fields.some((f) => f.id === 'A4' && f.key === 'title'));
 });
