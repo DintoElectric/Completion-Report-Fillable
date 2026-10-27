@@ -3,8 +3,8 @@ import { ArrowLeft, CheckCircle, Warning as WarningIcon, XCircle } from '@phosph
 import { MAX_SCAN_BYTES, RUN_GIVE_UP_MS, RUN_POLL_MS } from '../../shared/limits.ts';
 import type { AiFieldRequest, FillRequest, FillRunRow, JobDetail, TemplateRow } from '../../shared/types.ts';
 import {
-  aggregateJbi, buildFields, checkTemplate, fieldListForProject, importProposals, jbiDigest, noteContext, parseImportText, ruleProposals, toCellValues,
-  type Field, type JbiData, type Proposal, type Warning,
+  aggregateJbi, buildFields, checkTemplate, fieldListForProject, importProposals, jbiDigest, matchPoLines, noteContext, parseImportText, poProposals, poRowsOf, ruleProposals, toCellValues,
+  type Field, type JbiData, type PoLog, type PoMatch, type PoRow, type Proposal, type Warning,
 } from '../../shared/closeout.ts';
 import { api, apiFire, ApiError } from '../auth/api.ts';
 import { useAuth } from '../auth/AuthProvider.tsx';
@@ -19,7 +19,10 @@ import { fillWorkbook } from '../fill/writeXlsx.ts';
 type StepState = 'wait' | 'run' | 'ok' | 'warn' | 'fail';
 interface Step { key: string; label: string; state: StepState; detail?: string }
 
+interface PoState { name: string; log: PoLog; rows: PoRow[]; assign: (number | null)[]; matches: PoMatch[]; manual: number[] }
+
 interface Prepared {
+  po?: PoState;
   fields: Field[];
   proposals: Record<string, Proposal>;
   warnings: Warning[];
@@ -88,6 +91,7 @@ export default function Fill({ jobId }: { jobId: string }) {
 
       // documents
       let jbi: JbiData | null = null, jbiName = '';
+      let poLog: PoLog | null = null, poName = '';
       const texts: { name: string; text: string }[] = [];
       const scans: { name: string; data: string; size: number }[] = [];
       for (const f of sources) {
@@ -99,6 +103,11 @@ export default function Fill({ jobId }: { jobId: string }) {
           jbi = x.jbi; jbiName = f.file_name;
           warnings.push(...x.jbi.warnings.map((text) => ({ level: 'warn' as const, text: `${f.file_name}: ${text}` })));
           setStep(f.id, { state: 'ok', detail: `JBI report: ${plural(x.jbi.lines.length, 'line')}, ${plural(x.jbi.coTotals.length, 'change order')}` });
+        } else if (x.kind === 'po') {
+          if (poLog) { setStep(f.id, { state: 'warn', detail: 'A second PO log was found. Only the first is used.' }); continue; }
+          poLog = x.po; poName = f.file_name;
+          warnings.push(...x.po.warnings.map((text) => ({ level: 'warn' as const, text: `${f.file_name}: ${text}` })));
+          setStep(f.id, { state: x.po.warnings.length ? 'warn' : 'ok', detail: `PO log for job ${x.po.job}: ${plural(x.po.lines.length, 'PO')}` });
         } else if (x.kind === 'text') {
           texts.push({ name: f.file_name, text: x.text });
           setStep(f.id, { state: 'ok', detail: `${Math.round(x.text.length / 1000).toLocaleString()}k characters of text` });
@@ -126,6 +135,26 @@ export default function Fill({ jobId }: { jobId: string }) {
         setStep('rules', { state: unmapped.length ? 'warn' : 'ok', detail: `${plural(r.proposals.length, 'value')} worked out` });
       } else {
         setStep('rules', { state: 'warn', detail: "No JBI report was found among the documents, so the hours and dollars by cost code can't be worked out. Add the CF Data \"Budget/Cost Report\" export (.xls)." });
+      }
+
+      // purchase orders from the PO log
+      let po: PoState | undefined;
+      if (poLog) {
+        const rows = poRowsOf(fields);
+        const jobOf = (t: string) => /\d{4,6}/.exec(t)?.[0];
+        if (jbi && jobOf(jbi.job) && poLog.job && jobOf(jbi.job) !== jobOf(poLog.job)) warnings.unshift({ level: 'warn', text: `The PO log is for job ${poLog.job} but the JBI report is for job ${jobOf(jbi.job)}. One of them is from the wrong job.` });
+        setStep('po', { state: 'run' }, 'Placing the purchase orders on the sheet');
+        if (!rows.length) {
+          setStep('po', { state: 'warn', detail: 'The template has no purchase-order rows to fill.' });
+        } else {
+          const matches = matchPoLines(poLog.lines, rows);
+          po = { name: poName, log: poLog, rows, assign: matches.map((m) => m.row), matches, manual: [] };
+          poProposals(poLog.lines, po.assign, matches.map((m) => m.confidence), fields, poName).forEach((p) => { proposals[p.id] = p; });
+          const loose = matches.filter((m, i) => m.row === null && (poLog!.lines[i].amount || poLog!.lines[i].pickup)).length;
+          setStep('po', { state: loose ? 'warn' : 'ok', detail: loose ? `${plural(loose, 'PO')} still to place. Choose a row for each on the next screen.` : 'All purchase orders placed' });
+        }
+      } else if (fields.some((f) => f.key === 'poAmount')) {
+        warnings.push({ level: 'info', text: 'No PO log was found among the documents, so the purchase-order budget costs and amounts are empty. Add the CF Data purchase order log (.xls) to fill them.' });
       }
 
       // everything else: the AI reads the documents
@@ -175,13 +204,28 @@ export default function Fill({ jobId }: { jobId: string }) {
       for (const f of fields) { const p = proposals[f.id]; if (p && f.current === undefined && p.value !== null) initial[f.id] = String(p.value); }
       if (dead.current) return;
       setValues(initial);
-      setPrepared({ fields, proposals, warnings, templateBytes, sheetName: info.grid.name, unmapped });
+      setPrepared({ fields, proposals, warnings, templateBytes, sheetName: info.grid.name, unmapped, po });
     } catch (e) {
       if (dead.current) return;
       setSteps((all) => [...all.map((s) => (s.state === 'run' ? { ...s, state: 'fail' as const } : s)), { key: 'error', label: 'Stopped', state: 'fail', detail: errText(e, 'Something went wrong. Try again.') }]);
     } finally {
       if (!dead.current) setBusy(false);
     }
+  };
+
+  const assignPo = (i: number, row: number | null) => {
+    if (!prepared?.po) return;
+    const po = prepared.po;
+    const assign = po.assign.slice(); assign[i] = row;
+    const manual = po.manual.includes(i) ? po.manual : [...po.manual, i];
+    const conf = assign.map((_, k) => (manual.includes(k) ? ('high' as const) : po.matches[k].confidence));
+    const props = poProposals(po.log.lines, assign, conf, prepared.fields, po.name);
+    const poField = (f: Field) => f.group === 'Purchase orders' && (f.key === 'budgetCost' || f.key === 'poAmount' || f.key === 'poComment');
+    const nextP = { ...prepared.proposals }, nextV = { ...values };
+    for (const f of prepared.fields) if (poField(f)) { delete nextP[f.id]; if (f.current === undefined) nextV[f.id] = ''; }
+    for (const p of props) { nextP[p.id] = p; if (prepared.fields.find((f) => f.id === p.id)?.current === undefined) nextV[p.id] = String(p.value); }
+    setPrepared({ ...prepared, proposals: nextP, po: { ...po, assign, manual } });
+    setValues(nextV);
   };
 
   const downloadFieldList = async () => {
@@ -261,8 +305,8 @@ export default function Fill({ jobId }: { jobId: string }) {
           {!prepared && (
             <section className="panel">
               <p style={{ margin: 0, fontSize: 14 }}>
-                The app reads <b>{template?.name ?? 'the template'}</b> and {plural(sources.length, 'document')}. Hours and dollars by cost code are worked out from the JBI report with fixed rules.
-                Everything else (job header, contract and profit, change orders, purchase orders, notes) is read from your documents by the AI. <b>Nothing goes into the file until you have looked at it.</b>
+                The app reads <b>{template?.name ?? 'the template'}</b> and {plural(sources.length, 'document')}. Hours and dollars by cost code are worked out from the JBI report, and the purchase-order budget costs and amounts from the PO log, with fixed rules.
+                Everything else (job header, contract and profit, change orders, notes) is read from your documents by the AI. <b>Nothing goes into the file until you have looked at it.</b>
               </p>
               {me?.aiReady === false && <p className="err-text" style={{ margin: 0 }}>The AI is not set up yet (no ANTHROPIC_API_KEY in Netlify). Only the JBI numbers will be filled.</p>}
               <label className="field">Anything the AI should know? (optional)
@@ -285,7 +329,7 @@ export default function Fill({ jobId }: { jobId: string }) {
           {prepared && (
             <Review
               prepared={prepared} steps={steps} values={values} setValues={setValues}
-              onSave={() => void save()} saving={saving} problems={problems} onImport={(f) => void importValues(f)} importMsgs={importMsgs}
+              onSave={() => void save()} saving={saving} problems={problems} onImport={(f) => void importValues(f)} importMsgs={importMsgs} onAssignPo={assignPo}
               onRestart={() => { setPrepared(null); setSteps([]); }}
             />
           )}
@@ -312,9 +356,9 @@ function StepList({ steps }: { steps: Step[] }) {
 }
 
 /* ---------------- review ---------------- */
-function Review({ prepared, steps, values, setValues, onSave, saving, problems, onRestart, onImport, importMsgs }: {
+function Review({ prepared, steps, values, setValues, onSave, saving, problems, onRestart, onImport, importMsgs, onAssignPo }: {
   prepared: Prepared; steps: Step[]; values: Record<string, string>; setValues: (v: Record<string, string>) => void;
-  onSave: () => void; saving: number | null; problems: string[]; onRestart: () => void; onImport: (f: File) => void; importMsgs: string[];
+  onSave: () => void; saving: number | null; problems: string[]; onRestart: () => void; onImport: (f: File) => void; importMsgs: string[]; onAssignPo: (i: number, row: number | null) => void;
 }) {
   const { fields, proposals, warnings, unmapped } = prepared;
   const groups: { name: string; fields: Field[] }[] = [];
@@ -355,6 +399,7 @@ function Review({ prepared, steps, values, setValues, onSave, saving, problems, 
       {groups.map((g) => (
         <section className="panel" key={g.name}>
           <h2 className="h2">{g.name}</h2>
+          {g.name === 'Purchase orders' && prepared.po && <PoPanel po={prepared.po} onAssign={onAssignPo} />}
           {g.name === 'Labor codes' || g.name === 'Purchase orders'
             ? <GridTable fields={g.fields} values={values} set={set} proposals={proposals} />
             : <div className="stack">{g.fields.map((f) => <FieldRow key={f.id} f={f} v={values[f.id] ?? ''} set={set} p={proposals[f.id]} />)}</div>}
@@ -371,6 +416,53 @@ function Review({ prepared, steps, values, setValues, onSave, saving, problems, 
           </div>
         </div>
       </section>
+    </>
+  );
+}
+
+/** Each line of the PO log, and the row of the sheet it goes to. Changing a row recalculates the purchase-order columns. */
+function PoPanel({ po, onAssign }: { po: PoState; onAssign: (i: number, row: number | null) => void }) {
+  const money = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const loose = po.log.lines.filter((l, i) => po.assign[i] === null && (l.amount || l.pickup));
+  const looseAmt = loose.reduce((n, l) => n + l.amount, 0);
+  return (
+    <>
+      <p className="dim" style={{ margin: 0, fontSize: 13 }}>
+        From <b>{po.name}</b>. Each PO goes to one row. When several go to the same row they are added together. Budget cost is the PO amount plus the log's P/U column.
+        Change a row below and the purchase-order columns update (anything you typed in those boxes is replaced).
+      </p>
+      {loose.length > 0 && <p className="warn-text"><WarningIcon size={14} weight="fill" /> {plural(loose.length, 'PO')} (${money(looseAmt)}) {loose.length === 1 ? 'is' : 'are'} not placed on any row, so {loose.length === 1 ? 'its' : 'their'} dollars are not counted.</p>}
+      <div className="grid-scroll">
+        <table className="table fill-grid">
+          <thead><tr><th>PO #</th><th>Vendor</th><th>Code</th><th>Amount</th><th>P/U</th><th>Goes to</th></tr></thead>
+          <tbody>
+            {po.log.lines.map((l, i) => {
+              const empty = !l.amount && !l.pickup;
+              const m = po.matches[i];
+              const user = po.manual.includes(i);
+              return (
+                <tr key={`${l.po}-${i}`}>
+                  <td>{l.po}</td>
+                  <td className="file-name">{l.vendor}</td>
+                  <td>{l.code}</td>
+                  <td>{money(l.amount)}</td>
+                  <td>{money(l.pickup)}</td>
+                  <td>
+                    {empty ? <span className="dim">No amount</span> : (
+                      <select className={`input fill-input${!user && m.confidence !== 'high' ? ' check' : ''}`} style={{ minWidth: 260 }} value={po.assign[i] ?? ''} title={user ? 'Chosen by you' : m.why} aria-label={`Row for PO ${l.po}`}
+                        onChange={(e) => onAssign(i, e.target.value === '' ? null : Number(e.target.value))}>
+                        <option value="">Not on the sheet</option>
+                        {po.rows.map((r) => <option key={r.row} value={r.row}>{r.label}</option>)}
+                      </select>
+                    )}
+                    {!empty && !user && m.confidence !== 'high' && <span className={`conf-tag ${m.row === null ? 'low' : 'medium'}`} title={m.why} style={{ marginLeft: 8 }}>{m.row === null ? 'choose' : 'check'}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

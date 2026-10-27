@@ -25,6 +25,13 @@ How filling works (job page -> "Fill the template" -> `/j/:id/fill`):
    - estimate = contract section's Budget columns; approved CO = change-order sections' Budget columns; consumed = actuals of all sections
    - job average rate = (labor + burden dollars) / labor hours, all lines
    Consumed/CO materials and CO hours are marked "check" (medium confidence); the rest "high".
+3b. **Purchase orders come from the CF Data PO log** (`parsePoLog`, `matchPoLines`, `poProposals` in `shared/closeout.ts`). Each PO is placed on one
+   template row: by the cost code first, then by words in the vendor name (`SAME` word groups); unclear ones are left for the person to
+   pick in the "Purchase orders" panel of the check screen (changing a row recalculates that table). Several POs on one row are added.
+   Budget cost = PO amount + the log's P/U column (assumption, marked "check"); the sheet's own formula shows budget - PO as the pick-up.
+   Budget cost, PO amount and the vendor comment are 'rule' fields, so the AI and the Project field list leave them out. The two change-order
+   columns of the PO table still come from the CO log (AI / Project). A mismatch between the PO log's lines and its own total row, or
+   between the PO log's job number and the JBI's, is shown as a warning.
 4. Everything else (header, contract and profit, completed & proceeding COs, purchase orders, comments, notes) is read by the AI.
    `POST /api/fill` stores the request; the browser starts `/api/fill-background` (a Netlify background function, up to 15 min);
    the browser polls `GET /api/fill/:id`. The documents' text is deleted from the database when the run ends.

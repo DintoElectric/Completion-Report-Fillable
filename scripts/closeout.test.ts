@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
 import PizZip from 'pizzip';
 import {
-  addr, aggregateJbi, buildFields, checkTemplate, codesOfLabel, excelSerial, fieldListForProject, importProposals, jbiDigest, noteContext, parseImportText, parseJbi, parseNumberInput,
+  addr, aggregateJbi, buildFields, checkTemplate, codesOfLabel, excelSerial, fieldListForProject, importProposals, jbiDigest, matchPoLines, noteContext, parseImportText, parseJbi, parseNumberInput, parsePoLog, poProposals, poRowsOf,
   ruleProposals, splitAddr, toCellValues, type Field,
 } from '../shared/closeout.ts';
 import { readTemplate } from '../src/fill/template.ts';
@@ -388,7 +388,7 @@ test('every Field has what the review screen needs', async () => {
     assert.ok(f.label && f.group && f.key);
     assert.ok(['number', 'text', 'date'].includes(f.kind));
     assert.ok(f.source === 'rule' || f.source === 'ai');
-    if (f.source === 'rule') assert.equal(f.kind, 'number');
+    if (f.source === 'rule' && f.key !== 'poComment') assert.equal(f.kind, 'number');
   }
 });
 
@@ -399,6 +399,8 @@ test('the field list for a Project holds only the blanks the AI would answer, wi
   const list = fieldListForProject(fields, noteContext(t.grid), 'Closeout');
   assert.equal(list.fields.length, fields.filter((f) => f.source === 'ai').length);
   assert.ok(!list.fields.some((f) => f.cell === 'B38'), 'JBI-computed blanks are not listed');
+  assert.ok(!list.fields.some((f) => ['B46', 'C46', 'G46'].includes(f.cell)), 'PO-log blanks are not listed');
+  assert.ok(list.fields.some((f) => f.cell === 'E46'), "the change-order columns of the PO table are still listed");
   const pm = list.fields.find((f) => f.cell === 'B6')!;
   assert.deepEqual(pm.choices, ['ANN PM', 'BOB PM', 'CY PM']);
   assert.ok(list.fields.find((f) => f.cell === 'C19')!.meaning);
@@ -459,4 +461,89 @@ test('a template whose title cell is empty and whose meeting type reads "100% CL
   assert.equal(meet.current, '100% CLOSEOUT');
   assert.ok(fields.some((f) => f.id === 'C13' && f.key === 'meeting50Contract'), 'the contract row is found under its closeout label');
   assert.ok(!fields.some((f) => f.id === 'A4' && f.key === 'title'));
+});
+
+/* ---------- the PO log ---------- */
+const poRows = (): unknown[][] => [
+  ['PURCHASE ORDER LOG', '', '', '', '', '', '', ''],
+  ['JOB. NO.', 37003, '(Non-Taxable)', '', '', '', '', ''],
+  ['JOB NAME:', "CT CHILDREN'S MEDICAL CENTER", '', '', '', '', '', ''],
+  ['', '', '', '', '', 'PHASE', 'PO TYPED ', 'terms'],
+  ['DATE', 'PO #', 'VENDOR NAME', 'P/U ($)', '($) AMOUNT', 'CODE', '(Y/N)', ''],
+  [44943, 700301, 'Cummins (Gen / ATSs)', 324500, 2080000, '0090', 'Y', ''],
+  [44944, 700302, 'Graybar (Gear)', 103511, 1802238, '0030', 'Y', ''],
+  [44945, 700303, 'Net Services (LV Systems)', 0, 0, '0300', 'Y', ''],
+  [45754, 700304, 'Yale Electric (Lighting Warranty)', 5, 10, 1300, 'Y', ''],
+  ['', '', '', '', '', '', '', ''],
+  ['', '', '', 324500 + 103511 + 5, 2080000 + 1802238 + 10, '', '', ''],
+];
+
+test('a PO log is read: job, lines, codes, totals; a mismatch with its own total row is reported; other sheets are not PO logs', () => {
+  assert.equal(parsePoLog([['a'], [1]]), null);
+  assert.equal(parsePoLog(jbiRows()), null);
+  const log = parsePoLog(poRows())!;
+  assert.equal(log.job, '37003');
+  assert.equal(log.jobName, "CT CHILDREN'S MEDICAL CENTER");
+  assert.equal(log.lines.length, 4);
+  assert.deepEqual(log.lines.map((l) => l.po), ['700301', '700302', '700303', '700304']);
+  assert.deepEqual(log.lines.map((l) => l.code), ['090', '030', '300', '300'], '"0090" -> 090 and a numeric 1300 -> 300');
+  assert.equal(log.lines[0].pickup, 324500);
+  assert.equal(log.totals?.amount, 2080000 + 1802238 + 10);
+  assert.deepEqual(log.warnings, []);
+  const broken = poRows(); (broken[10] as unknown[])[4] = 5;
+  assert.match(parsePoLog(broken)!.warnings[0], /total row says/);
+});
+
+const rowsFixture = () => [
+  { row: 10, label: "030-GEAR ATS'", codes: ['030'] },
+  { row: 11, label: '030-DISTRIBUTION', codes: ['030'] },
+  { row: 12, label: '030-UPS', codes: ['030'] },
+  { row: 13, label: '090-GENERATOR/ATS', codes: ['090'] },
+  { row: 14, label: '110-BDA', codes: ['110'] },
+  { row: 15, label: '110-FIRE ALARM', codes: ['110'] },
+  { row: 16, label: '140-CABLE TRAY', codes: ['140'] },
+  { row: 17, label: '140-TELE DATA', codes: ['140'] },
+  { row: 18, label: '155-LIGHTNING PROTECTION', codes: ['155'] },
+  { row: 19, label: '300-RIGGING', codes: ['300'] },
+  { row: 20, label: '300-TESTING', codes: ['300'] },
+];
+const ln = (vendor: string, code: string, amount = 100, pickup = 10) => ({ po: '1', vendor, code, amount, pickup, terms: '' });
+
+test('POs are matched to rows by code, then by the words in the vendor name; unclear ones are left to the person', () => {
+  const m = matchPoLines([
+    ln('Cummins (Gen / ATSs)', '090'),            // one row for the code
+    ln('Graybar (Gear)', '030'),                  // gear fits two rows: not clear
+    ln('Integ (UPS)', '031'),                     // no row for 031, but the name says UPS
+    ln('TPC (Fire Alarm)', '110'),                // two rows for 110, the name picks one
+    ln('Converge One (Cellular DAS)', '140'),     // two rows for 140, the name picks tele data
+    ln('B&B Lightning Protection', '300'),        // the code points at rigging/testing, the name at lightning protection
+    ln('Quick Pick Crane', '300'),                // crane = rigging
+    ln('Consolidated (LV Systems)', '300'),       // nothing in the name helps
+    ln('Net Services', '300', 0, 0),              // no amount
+  ], rowsFixture());
+  assert.deepEqual(m.map((x) => x.row), [13, null, 12, 15, 17, 18, 19, null, null]);
+  assert.deepEqual(m.map((x) => x.confidence), ['high', 'low', 'medium', 'medium', 'medium', 'medium', 'medium', 'low', 'high']);
+  assert.match(m[1].why, /4 rows|3 rows|choose/);
+});
+
+test('PO rows of the template are listed with their codes', async () => {
+  const t = await readTemplate(await makeTemplate());
+  const rows = poRowsOf(buildFields(t.grid, { choices: t.choices }));
+  assert.deepEqual(rows.map((r) => [r.row, r.label, r.codes.join()]), [[46, '030-DISTRIBUTION', '030'], [47, '110-FIRE ALARM', '110'], [48, '300-TESTING', '300']]);
+});
+
+test('PO proposals: amounts added per row, budget = amount + P/U, vendors as the comment, unplaced and empty POs left out', async () => {
+  const t = await readTemplate(await makeTemplate());
+  const fields = buildFields(t.grid, { choices: t.choices });
+  const lines = [ln('Graybar (Gear)', '030', 1000, 100), { ...ln('EW (Gear)', '030', 500, -50), po: '2' }, { ...ln('Loose Co', '300', 999, 1), po: '3' }, { ...ln('Zero', '110', 0, 0), po: '4' }];
+  const p = poProposals(lines, [46, 46, null, 47], ['high', 'medium', 'low', 'high'], fields, 'PO.xls');
+  const by = Object.fromEntries(p.map((x) => [x.id, x]));
+  assert.equal(by.C46.value, 1500);                       // PO amount
+  assert.equal(by.B46.value, 1100 + 450);                 // budget cost: amount + P/U, summed
+  assert.equal(by.G46.value, 'Graybar; EW');              // comment: vendor names without the bracketed part
+  assert.equal(by.C46.confidence, 'medium', 'one of the two was only a guess');
+  assert.equal(by.B46.confidence, 'medium');
+  assert.match(by.C46.note!, /2 POs/);
+  assert.ok(!('C47' in by) && !('C48' in by), 'an empty PO and an unplaced PO add nothing');
+  assert.ok(p.every((x) => x.origin === 'rule'));
 });

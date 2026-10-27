@@ -58,6 +58,7 @@ export interface Field {
   source: FieldSource;        // 'rule' = computed from the JBI report; 'ai' = read from the documents by the AI
   key: string;                // which rule or AI question this is
   codes?: string[];           // labor-code rows: the 3-digit JBI codes this row covers
+  poCodes?: string[];         // purchase-order rows: the 3-digit cost codes in the row's name
   hint?: string;              // for the AI: what the cell means
   choices?: string[];         // the template only accepts these values (a dropdown)
   current?: string | number;  // already in the template (not a placeholder): left alone unless the person chooses to replace it
@@ -216,26 +217,27 @@ export function buildFields(g: SheetGrid, opts: BuildOptions = {}): Field[] {
     }
   }
 
-  /* purchase orders */
+  /* purchase orders: budget cost, PO amount and the vendor comment come from the PO log; the change-order columns are read from the documents */
   const poHdr = rowWhere((r) => /^PURCHASE ORDER/i.test(A(r)), laborHdr || 1);
   if (poHdr) {
     const roles = rolesOnRow(g, poHdr, PO_ROLES);
     for (let r = poHdr + 1; r <= g.maxRow && A(r); r++) {
       const label = A(r);
+      const poCodes = codesOfLabel(label) ?? [];
       for (const [role] of PO_ROLES) {
         const col = roles[role];
         if (!col) continue;
         const id = addr(col, r);
         if (role === 'comment') {
-          add({ id, group: 'Purchase orders', label: `${label}: comment`, kind: 'text', source: 'ai', key: 'poComment', hint: 'The vendor and any note that matters about this purchase order, only if a document says it.' });
+          add({ id, group: 'Purchase orders', label: `${label}: comment`, kind: 'text', source: 'rule', key: 'poComment', poCodes, hint: 'The vendor name(s), from the PO log.' });
+        } else if (role === 'budgetCost' || role === 'poAmount') {
+          add({ id, group: 'Purchase orders', label: `${label}: ${PO_LABEL[role]}`, kind: 'number', source: 'rule', key: role, poCodes, hint: role === 'poAmount' ? 'The PO amount, from the PO log.' : 'The PO amount plus the pick-up (P/U), from the PO log.' });
         } else {
           const hints: Record<string, string> = {
-            budgetCost: 'What was budgeted (estimated) for this item, from the estimate or budget.',
-            poAmount: 'The amount of the purchase order actually issued for this item.',
             coOut: "Change order / out-of-contract dollars for this item, from approved change orders.",
             coProc: "Dollars for this item in completed and proceeding change orders.",
           };
-          add({ id, group: 'Purchase orders', label: `${label}: ${PO_LABEL[role]}`, kind: 'number', source: 'ai', key: role, hint: hints[role] });
+          add({ id, group: 'Purchase orders', label: `${label}: ${PO_LABEL[role]}`, kind: 'number', source: 'ai', key: role, poCodes, hint: hints[role] });
         }
       }
     }
@@ -611,7 +613,7 @@ export function importProposals(rows: ImportRow[], fields: Field[]): { proposals
     if (r.value === undefined || r.value === null || String(r.value).trim() === '') continue;
     const f = byId.get(id);
     if (!f) { problems.push(`${id || '(no cell)'}: this is not a blank on the template, so it was ignored.`); continue; }
-    if (f.source === 'rule') { problems.push(`${id} (${f.label}): this one is worked out from the JBI report, so the file's value was ignored.`); continue; }
+    if (f.source === 'rule') { problems.push(`${id} (${f.label}): the app fills this one from the JBI report or the PO log, so the file's value was ignored.`); continue; }
     if (seen.has(id)) { problems.push(`${id}: given twice; the first value was used.`); continue; }
     let value: string | number | null = null;
     if (f.kind === 'number') value = typeof r.value === 'number' ? r.value : parseNumberInput(String(r.value));
@@ -631,4 +633,140 @@ export function importProposals(rows: ImportRow[], fields: Field[]): { proposals
     });
   }
   return { proposals: out, problems };
+}
+
+/* ---------------- the purchase order (PO) log ---------------- */
+export interface PoLine {
+  po: string; vendor: string; pickup: number; amount: number;
+  code: string;            // the three-digit cost code ("0090" -> "090")
+  terms: string;
+}
+export interface PoLog { job: string; jobName: string; lines: PoLine[]; totals: { pickup: number; amount: number } | null; warnings: string[] }
+
+const poText = (v: unknown) => (typeof v === 'number' ? String(Math.round(v)) : norm(v));
+
+/** Reads the CF Data "Purchase Order Log" exported to Excel. Returns null when the rows are not that log. */
+export function parsePoLog(rows: unknown[][]): PoLog | null {
+  const h = rows.findIndex((r) => norm(r[0]).toUpperCase() === 'DATE' && /^PO\s*#/i.test(norm(r[1])) && /VENDOR/i.test(norm(r[2])));
+  if (h < 0 || !rows.slice(0, h).some((r) => /PURCHASE ORDER LOG/i.test(norm(r[0])))) return null;
+  const log: PoLog = { job: '', jobName: '', lines: [], totals: null, warnings: [] };
+  for (const r of rows.slice(0, h)) {
+    if (/^JOB\.?\s*NO/i.test(norm(r[0]))) log.job = poText(r[1]);
+    if (/^JOB NAME/i.test(norm(r[0]))) log.jobName = norm(r[1]);
+  }
+  for (const r of rows.slice(h + 1)) {
+    const po = poText(r[1]);
+    if (!po) {
+      if (!norm(r[2]) && (toNum(r[3]) || toNum(r[4]))) log.totals = { pickup: toNum(r[3]), amount: toNum(r[4]) };
+      continue;
+    }
+    const raw = poText(r[5]).replace(/\D/g, '');
+    log.lines.push({ po, vendor: norm(r[2]), pickup: toNum(r[3]), amount: toNum(r[4]), code: raw ? raw.padStart(3, '0').slice(-3) : '', terms: norm(r[7]) });
+  }
+  if (!log.lines.length) return null;
+  if (log.totals) {
+    const a = log.lines.reduce((n, l) => n + l.amount, 0), p = log.lines.reduce((n, l) => n + l.pickup, 0);
+    if (Math.abs(a - log.totals.amount) > 1 || Math.abs(p - log.totals.pickup) > 1) {
+      log.warnings.push(`The PO lines add up to $${Math.round(a).toLocaleString('en-US')} (pick-up $${Math.round(p).toLocaleString('en-US')}), but the log's own total row says $${Math.round(log.totals.amount).toLocaleString('en-US')} (pick-up $${Math.round(log.totals.pickup).toLocaleString('en-US')}). Check that the whole log was exported.`);
+    }
+  }
+  return log;
+}
+
+export interface PoRow { row: number; label: string; codes: string[] }
+
+/** The purchase-order rows of the template, in order. */
+export function poRowsOf(fields: Field[]): PoRow[] {
+  return fields.filter((f) => f.group === 'Purchase orders' && f.key === 'poAmount').map((f) => ({
+    row: splitAddr(f.id).row, label: f.label.slice(0, f.label.lastIndexOf(': ')), codes: f.poCodes ?? [],
+  }));
+}
+
+export interface PoMatch { row: number | null; confidence: 'high' | 'medium' | 'low'; why: string }
+
+// Words that mean the same thing on a vendor name and a row name.
+const SAME: string[][] = [
+  ['gear', 'distribution', 'switchgear', 'switchboard', 'switchboards', 'panelboard', 'panelboards'],
+  ['fire', 'alarm', 'fa'],
+  ['bda', 'das', 'cellular', 'antenna'],
+  ['lightning'],
+  ['lighting', 'light', 'lights', 'fixture', 'fixtures', 'controls'],
+  ['security', 'access', 'camera', 'cameras'],
+  ['crane', 'rigging', 'rig', 'hoist', 'lift', 'lifts', 'rentals'],
+  ['test', 'testing'],
+  ['scan', 'scanning'],
+  ['ups'],
+  ['battery', 'batteries'],
+  ['feeder', 'feeders'],
+  ['seismic'],
+  ['permit', 'permits'],
+  ['bond'],
+  ['generator', 'generators', 'gen'],
+  ['tele', 'data', 'telecom', 'das', 'cellular'],
+  ['nurse'],
+  ['sound', 'masking'],
+  ['wiremold'],
+  ['devices', 'device'],
+  ['duct'],
+  ['inverter'],
+  ['conduit', 'boxes'],
+  ['pole', 'poles', 'bases'],
+  ['tray'],
+  ['safety'],
+  ['tax', 'taxable'],
+];
+const wordGroups = (s: string): Set<number> => {
+  const out = new Set<number>();
+  for (const w of s.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (w.length < 2) continue;
+    SAME.forEach((g, i) => { if (g.includes(w)) out.add(i); });
+  }
+  return out;
+};
+
+/**
+ * Proposes which template row each PO belongs to. The cost code on the log is the strongest sign; when a code has several rows
+ * (030, 110, 300 ...) or none, the words in the vendor name decide. If that is not clear the PO is left unassigned for the person to place.
+ */
+export function matchPoLines(lines: PoLine[], rows: PoRow[]): PoMatch[] {
+  const score = (l: PoLine, r: PoRow) => { const v = wordGroups(l.vendor), w = wordGroups(r.label); let n = 0; v.forEach((g) => { if (w.has(g)) n++; }); return n; };
+  const best = (l: PoLine, from: PoRow[]) => {
+    const sc = from.map((r) => ({ r, n: score(l, r) })).sort((a, b) => b.n - a.n);
+    return sc[0] && sc[0].n > 0 && (!sc[1] || sc[1].n < sc[0].n) ? sc[0].r : null;
+  };
+  return lines.map((l): PoMatch => {
+    if (!l.amount && !l.pickup) return { row: null, confidence: 'high', why: 'No amount on this PO.' };
+    const byCode = rows.filter((r) => r.codes.includes(l.code));
+    if (byCode.length === 1) return { row: byCode[0].row, confidence: 'high', why: `Code ${l.code} has one row.` };
+    if (byCode.length > 1) {
+      const b = best(l, byCode);
+      if (b) return { row: b.row, confidence: 'medium', why: `Code ${l.code}, and the vendor name fits "${b.label}".` };
+    }
+    const any = best(l, rows);
+    if (any) return { row: any.row, confidence: 'medium', why: `Matched on the vendor name (the log says code ${l.code || '?'}).` };
+    return { row: null, confidence: 'low', why: byCode.length ? `Code ${l.code} has ${byCode.length} rows: choose one.` : `No row for code ${l.code || '?'}: choose one, or leave it off the sheet.` };
+  });
+}
+
+/**
+ * Budget cost, PO amount and vendor comment for each template row, from the PO log lines assigned to it.
+ * Budget cost = PO amount + the log's P/U (pick-up) column; the sheet's own formula then shows budget minus PO as the pick-up.
+ */
+export function poProposals(lines: PoLine[], assign: (number | null)[], conf: ('high' | 'medium' | 'low')[], fields: Field[], logName: string): Proposal[] {
+  const byRow = new Map<number, number[]>();
+  assign.forEach((row, i) => { if (row !== null && row !== undefined && (lines[i].amount || lines[i].pickup)) byRow.set(row, [...(byRow.get(row) ?? []), i]); });
+  const idOf = (key: string, row: number) => fields.find((f) => f.group === 'Purchase orders' && f.key === key && splitAddr(f.id).row === row)?.id;
+  const out: Proposal[] = [];
+  for (const [row, idx] of byRow) {
+    const amount = round2(idx.reduce((n, i) => n + lines[i].amount, 0));
+    const budget = round2(idx.reduce((n, i) => n + lines[i].amount + lines[i].pickup, 0));
+    const pos = idx.map((i) => `PO ${lines[i].po}`).join(', ');
+    const sure = idx.every((i) => conf[i] === 'high');
+    const vendors = [...new Set(idx.map((i) => lines[i].vendor.replace(/\s*\(.*$/, '').trim() || lines[i].vendor))].join('; ').slice(0, 200);
+    const idA = idOf('poAmount', row), idB = idOf('budgetCost', row), idC = idOf('poComment', row);
+    if (idA && amount) out.push({ id: idA, value: amount, source: `${logName}: ${pos}`, confidence: sure ? 'high' : 'medium', note: idx.length > 1 ? `${idx.length} POs added together.` : undefined, origin: 'rule' });
+    if (idB && budget) out.push({ id: idB, value: budget, source: `${logName}: ${pos}`, confidence: 'medium', note: 'PO amount plus the P/U column of the log. Check it against your estimate.', origin: 'rule' });
+    if (idC && vendors) out.push({ id: idC, value: vendors, source: `${logName}: ${pos}`, confidence: 'high', origin: 'rule' });
+  }
+  return out;
 }

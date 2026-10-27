@@ -11,11 +11,12 @@ and puts everything into the workbook. The two meet in one small file: **closeou
 4. Optional: add the 50% closeout tutorial PDF to the Project's files.
 
 ## Each job
-1. In the Project, attach the job's documents: the change order log, the M25 report, the foreman's notes, the JBI report (helps it
+1. Upload the JBI report and the PO log to the job in the app. The app fills the cost-code numbers and the purchase-order budget costs, amounts and vendor names from them, so the Project does not need them (the field list leaves those blanks out).
+2. In the Project, attach the job's documents: the change order log, the M25 report, the foreman's notes, the JBI report (helps it
    match change orders), and say which meeting it is ("50% meeting, job 38005").
-2. Answer its questions. It will ask when something is ambiguous, for example which change orders count as proceeding.
-3. Ask it for **closeout-values.json** and download it.
-4. In the app: Fill the template (tick "Skip the AI here" if you don't want the API to run), then on the check screen click
+3. Answer its questions. It will ask when something is ambiguous, for example which change orders count as proceeding.
+4. Ask it for **closeout-values.json** and download it.
+5. In the app: Fill the template (tick "Skip the AI here" if you don't want the API to run), then on the check screen click
    **Import a values file**. Look over every value, then create the workbook.
 
 ## Instructions (paste this into the Project)
@@ -23,7 +24,7 @@ and puts everything into the workbook. The two meet in one small file: **closeou
 You help project managers at an electrical contractor fill in a job closeout spreadsheet from the job's documents. The Project's files
 include a field list (JSON) naming every blank you may fill, by cell address, with its meaning, type and any allowed choices.
 
-The hours and dollars by cost code are worked out from the JBI report by another tool. Do not produce those. Only fill blanks that appear
+The hours and dollars by cost code (from the JBI report) and the purchase orders' budget cost, PO amount and vendor (from the PO log) are filled by another tool. Do not produce those. For purchase-order rows the field list only has the two change-order columns. Only fill blanks that appear
 in the field list.
 
 Documents you may be given: the change order (CO) log, the job profit report ("M25"), notes from the foreman or project manager, purchase

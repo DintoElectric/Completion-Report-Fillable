@@ -1,11 +1,12 @@
 // Turns an uploaded document into something the filling can use. This runs in the browser, so a large file never has to fit in
 // one request to a function, and only text (not the file) is sent to the AI.
 import PizZip from 'pizzip';
-import { parseJbi, type JbiData } from '../../shared/closeout.ts';
+import { parseJbi, parsePoLog, type JbiData, type PoLog } from '../../shared/closeout.ts';
 import { MAX_DOC_PAGES_TEXT, type FileType } from '../../shared/limits.ts';
 
 export type Extracted =
   | { kind: 'jbi'; jbi: JbiData }
+  | { kind: 'po'; po: PoLog }                   // the purchase order log
   | { kind: 'text'; text: string }
   | { kind: 'scan'; bytes: ArrayBuffer }          // a PDF with no text layer: the AI reads the PDF itself
   | { kind: 'skip'; reason: string };
@@ -78,6 +79,8 @@ async function sheetText(bytes: ArrayBuffer, type: FileType): Promise<Extracted>
     const rows = XLSX.utils.sheet_to_json<unknown[]>(first, { header: 1, raw: true, defval: '' });
     const jbi = parseJbi(rows);
     if (jbi) return { kind: 'jbi', jbi };
+    const po = parsePoLog(rows);
+    if (po) return { kind: 'po', po };
   }
   const parts: string[] = [];
   for (const name of wb.SheetNames) {
